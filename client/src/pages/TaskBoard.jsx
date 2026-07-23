@@ -305,7 +305,10 @@ function TaskCard({ task, projects, onStatusChange, onEdit, onDelete }) {
   return (
     <div className="bg-slate-800 rounded-lg p-3">
       <div className="flex items-start justify-between">
-        <p className="text-sm font-medium flex-1">{task.title}</p>
+        <p className="text-sm font-medium flex-1">
+          <span className="text-slate-500 font-mono mr-1.5">#{task.id}</span>
+          {task.title}
+        </p>
         <div className="flex gap-1 shrink-0">
           <button onClick={() => onEdit(task)} className="text-xs text-blue-400 hover:text-blue-300 px-1.5 py-0.5 rounded bg-blue-900/20" title="Edit">✏️</button>
           <button onClick={() => setShowDeleteConfirm(true)} className="text-xs text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded bg-red-900/20" title="Delete">🚮</button>
@@ -412,7 +415,10 @@ function TaskForm({ task, projects, onClose, onSave }) {
       <div className="bg-slate-800 rounded-xl flex flex-col transition-all duration-200 resize overflow-auto" style={{ width: '768px', minWidth: '480px', maxWidth: '95vw', minHeight: '420px', maxHeight: '92vh' }}>
 
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700 shrink-0">
-          <h3 className="text-lg font-bold">{task ? 'Edit Task' : 'New Task'}</h3>
+          <h3 className="text-lg font-bold">
+            {task ? 'Edit Task' : 'New Task'}
+            {task && <span className="text-slate-500 font-mono text-sm ml-2">#{task.id}</span>}
+          </h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">✕</button>
         </div>
 

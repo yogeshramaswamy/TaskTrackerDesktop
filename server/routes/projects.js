@@ -24,7 +24,23 @@ router.get('/:id', (req, res) => {
 });
 
 router.get('/:id/tasks', (req, res) => {
-  const tasks = all('SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at DESC', [Number(req.params.id)]);
+  // Server returns a sensible "by progress" default (active work first). The
+  // client owns the final order via its Progress/Custom toggle, using the
+  // sort_order field carried on each row for Custom mode.
+  const tasks = all(`
+    SELECT * FROM tasks
+    WHERE project_id = ?
+    ORDER BY
+      CASE status
+        WHEN 'in_progress' THEN 0
+        WHEN 'blocked' THEN 1
+        WHEN 'todo' THEN 2
+        WHEN 'done' THEN 3
+        WHEN 'archived' THEN 4
+        ELSE 5
+      END,
+      created_at DESC
+  `, [Number(req.params.id)]);
   res.json(tasks);
 });
 

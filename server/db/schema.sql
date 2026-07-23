@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     start_date  DATETIME,
     due_date    DATETIME,
     tags        TEXT DEFAULT '[]',
+    sort_order  INTEGER,
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );

@@ -43,6 +43,7 @@ function initDb() {
     // Migrations
     try { db.exec('ALTER TABLE tasks ADD COLUMN start_date DATETIME'); } catch (e) { /* already exists */ }
     try { db.exec('ALTER TABLE tasks ADD COLUMN ticket_url TEXT'); } catch (e) { /* already exists */ }
+    try { db.exec('ALTER TABLE tasks ADD COLUMN sort_order INTEGER'); } catch (e) { /* already exists */ }
 
     // Pending deletions table
     db.exec(`CREATE TABLE IF NOT EXISTS pending_deletions (
@@ -175,6 +176,7 @@ function importDbFile(filePath) {
   db.exec(schema);
   try { db.exec('ALTER TABLE tasks ADD COLUMN start_date DATETIME'); } catch (e) { /* exists */ }
   try { db.exec('ALTER TABLE tasks ADD COLUMN ticket_url TEXT'); } catch (e) { /* exists */ }
+  try { db.exec('ALTER TABLE tasks ADD COLUMN sort_order INTEGER'); } catch (e) { /* exists */ }
   db.exec(`CREATE TABLE IF NOT EXISTS pending_deletions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id INTEGER NOT NULL,

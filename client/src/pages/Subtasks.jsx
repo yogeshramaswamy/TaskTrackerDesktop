@@ -125,7 +125,10 @@ function SubtaskCard({ task, onStatusChange, onEdit, onDelete }) {
   return (
     <div className="bg-slate-800 rounded-lg p-3">
       <div className="flex items-start justify-between">
-        <p className="text-sm font-medium flex-1">{task.title}</p>
+        <p className="text-sm font-medium flex-1">
+          <span className="text-slate-500 font-mono mr-1.5">#{task.id}</span>
+          {task.title}
+        </p>
         <div className="flex gap-1">
           <button onClick={() => onEdit(task)} className="text-xs text-blue-400 hover:text-blue-300 px-1.5 py-0.5 rounded bg-blue-900/20" title="Edit">✏️</button>
           <button onClick={() => setShowDeleteConfirm(true)} className="text-xs text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded bg-red-900/20" title="Delete">🚮</button>

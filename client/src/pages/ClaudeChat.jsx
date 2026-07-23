@@ -163,6 +163,16 @@ const ACTION_ICONS = {
   delete_task: '🗑',
 };
 
+const ACTION_LABELS = {
+  create_project: 'Create project',
+  create_task: 'Create task',
+  update_task: 'Update task',
+  update_project: 'Update project',
+  log_activity: 'Log activity',
+  create_reminder: 'Create reminder',
+  delete_task: 'Delete task',
+};
+
 const PRIORITY_COLORS = {
   urgent: 'text-red-400',
   high: 'text-orange-400',
@@ -182,7 +192,7 @@ function ProposedPlan({ actions, status, onApprove, onCancel }) {
   if (status === 'done') {
     return (
       <div className="mt-3 pt-3 border-t border-slate-600">
-        <p className="text-xs text-green-400">✓ All {actions.length} item{actions.length > 1 ? 's' : ''} created successfully.</p>
+        <p className="text-xs text-green-400">✓ All {actions.length} item{actions.length > 1 ? 's' : ''} applied successfully.</p>
       </div>
     );
   }
@@ -190,7 +200,7 @@ function ProposedPlan({ actions, status, onApprove, onCancel }) {
   if (status === 'error') {
     return (
       <div className="mt-3 pt-3 border-t border-slate-600">
-        <p className="text-xs text-red-400">✗ Something went wrong while creating. Check the task board.</p>
+        <p className="text-xs text-red-400">✗ Something went wrong while applying. Check the task board.</p>
       </div>
     );
   }
@@ -198,22 +208,28 @@ function ProposedPlan({ actions, status, onApprove, onCancel }) {
   if (status === 'executing') {
     return (
       <div className="mt-3 pt-3 border-t border-slate-600">
-        <p className="text-xs text-blue-400 animate-pulse">Creating {actions.length} item{actions.length > 1 ? 's' : ''}...</p>
+        <p className="text-xs text-blue-400 animate-pulse">Applying {actions.length} item{actions.length > 1 ? 's' : ''}...</p>
       </div>
     );
   }
 
   return (
     <div className="mt-3 pt-3 border-t border-slate-600">
-      <p className="text-xs text-slate-400 font-semibold mb-2">📋 Plan — {actions.length} item{actions.length > 1 ? 's' : ''} to create:</p>
+      <p className="text-xs text-slate-400 font-semibold mb-2">📋 Plan — {actions.length} change{actions.length > 1 ? 's' : ''} to review:</p>
       <div className="space-y-1.5 mb-3">
         {actions.map((a, i) => (
           <div key={i} className="flex items-start gap-2 bg-slate-700/50 rounded-lg px-2.5 py-2">
             <span className="text-sm shrink-0">{ACTION_ICONS[a.action] || '•'}</span>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-white leading-tight">{a.title}</p>
+              <p className="text-xs font-medium text-white leading-tight">
+                {a.title || `${ACTION_LABELS[a.action] || a.action}${a.id ? ` #${a.id}` : ''}`}
+              </p>
               {a.description && <p className="text-xs text-slate-400 mt-0.5 leading-tight truncate">{a.description}</p>}
               <div className="flex gap-2 mt-0.5">
+                {(a.action === 'update_task' || a.action === 'update_project') && (
+                  <span className="text-xs text-amber-400">{ACTION_LABELS[a.action]}</span>
+                )}
+                {a.status && <span className="text-xs text-slate-400">{a.status}</span>}
                 {a.priority && <span className={`text-xs ${PRIORITY_COLORS[a.priority] || 'text-slate-400'}`}>{a.priority}</span>}
                 {a.parent_id && <span className="text-xs text-slate-500">subtask</span>}
                 {a.action === 'create_project' && <span className="text-xs text-blue-400">project</span>}
@@ -227,7 +243,7 @@ function ProposedPlan({ actions, status, onApprove, onCancel }) {
           onClick={onApprove}
           className="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1.5 rounded-lg font-medium"
         >
-          ✓ Create All
+          ✓ Approve All
         </button>
         <button
           onClick={onCancel}

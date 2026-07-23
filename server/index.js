@@ -17,7 +17,11 @@ const settingsRouter = require('./routes/settings');
 
 const app = express();
 
-app.use(cors());
+// The UI is served from this same origin (Electron loads http://localhost:PORT,
+// and the Vite dev server proxies /api here), so no cross-origin request is ever
+// legitimate. Restrict CORS to our own origin to stop arbitrary websites in the
+// user's browser from silently hitting the local API (localhost CSRF).
+app.use(cors({ origin: `http://localhost:${config.port}` }));
 app.use(express.json());
 
 app.use(express.static(path.join(__dirname, '../client/dist')));
@@ -39,7 +43,9 @@ app.get('*', (req, res) => {
 async function start() {
   await initDb();
   initReminders();
-  app.listen(config.port, () => {
+  // Bind to loopback only: the API must not be reachable from other machines
+  // on the network — this is a single-user local desktop app.
+  app.listen(config.port, '127.0.0.1', () => {
     console.log(`TaskTracker Pro server running on http://localhost:${config.port}`);
   });
 }

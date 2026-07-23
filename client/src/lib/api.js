@@ -23,6 +23,7 @@ export const api = {
     create: (data) => request('/tasks', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) => request(`/tasks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id) => request(`/tasks/${id}`, { method: 'DELETE' }),
+    reorder: (ids) => request('/tasks/reorder', { method: 'PUT', body: JSON.stringify({ ids }) }),
   },
   projects: {
     list: () => request('/projects'),

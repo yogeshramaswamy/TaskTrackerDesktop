@@ -21,11 +21,11 @@ Always respond with a JSON object:
 }
 
 CRITICAL RULES FOR proposed_actions vs actions:
-- PUT IN proposed_actions (shown as preview, user must approve): create_task, create_project
-- PUT IN actions (execute immediately): update_task, update_project, log_activity, create_reminder, delete_task
-- NEVER put create_task or create_project in "actions" — always use "proposed_actions" for these
-- When proposing creations, describe clearly in "message" what you plan to create and why, then list it as a plan
-- If the user says "yes", "go ahead", "create it", "confirm", "do it" — they are approving a previously shown plan; in that case you may put create_task/create_project in "actions" directly
+- PUT IN proposed_actions (shown as preview, user must approve): create_task, create_project, update_task, update_project
+- PUT IN actions (execute immediately, non-destructive only): log_activity, create_reminder, delete_task
+- NEVER put a create_* or update_* action in "actions" — creating or changing tasks/projects always requires user approval, so use "proposed_actions" for those
+- When proposing changes, describe clearly in "message" what you plan to do and why, then list it as a plan
+- Note: the app enforces this server-side — any create_* or update_* you place in "actions" is moved to the approval plan automatically, so prefer proposed_actions directly
 
 RULES:
 - When creating subtasks, use parent_id to link them to a parent task
@@ -79,25 +79,145 @@ async function chat(userMessage) {
     }
   }
 
+  // Security guardrail: the model's output is untrusted (task/project text is
+  // fed into the prompt, so a malicious task description could try to inject
+  // actions). Only non-destructive actions may auto-execute; any create_* or
+  // update_* the model tried to run immediately is forced into the approval
+  // plan instead, no matter what it claimed.
+  const requested = Array.isArray(parsed.actions) ? parsed.actions : [];
+  const proposed = Array.isArray(parsed.proposed_actions) ? parsed.proposed_actions : [];
+
+  const autoRun = [];
+  const forcedToApproval = [];
+  for (const action of requested) {
+    if (AUTO_EXECUTABLE.has(action && action.action)) {
+      autoRun.push(action);
+    } else {
+      forcedToApproval.push(action);
+    }
+  }
+
   const executedActions = [];
-  if (parsed.actions && parsed.actions.length > 0) {
+  if (autoRun.length > 0) {
     backupDb();
   }
-  for (const action of (parsed.actions || [])) {
-    const result = executeAction(action);
-    executedActions.push(result);
+  for (const action of autoRun) {
+    executedActions.push(executeAction(action));
   }
+
+  // Validate every proposed action before it ever reaches the UI, so the
+  // approve button can't be tricked into applying a malformed/unknown action.
+  const proposedActions = [...proposed, ...forcedToApproval]
+    .map(validateAction)
+    .filter(Boolean);
 
   run('INSERT INTO claude_chat_history (role, content) VALUES (?, ?)', ['assistant', JSON.stringify(parsed)]);
 
   return {
     message: parsed.message,
     actions: executedActions,
-    proposed_actions: parsed.proposed_actions || [],
+    proposed_actions: proposedActions,
   };
 }
 
-function executeAction(action) {
+// Actions safe to run without explicit user approval. delete_task only *stages*
+// a pending deletion (it never deletes here), so it belongs in this set.
+const AUTO_EXECUTABLE = new Set(['log_activity', 'create_reminder', 'delete_task']);
+
+const VALID_STATUS = new Set(['todo', 'in_progress', 'done', 'blocked', 'archived']);
+const VALID_PRIORITY = new Set(['low', 'medium', 'high', 'urgent']);
+const VALID_PROJECT_STATUS = new Set(['active', 'archived', 'on_hold', 'completed']);
+const VALID_RECURRING = new Set(['daily', 'weekly']);
+
+// Coerce to a positive integer id, or null if not a usable id.
+function toId(v) {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+// Normalize + whitelist an action's fields. Returns a sanitized action, or
+// null if the action is unknown or missing what it needs. Applied to every
+// action before it is executed or shown for approval.
+function validateAction(action) {
+  if (!action || typeof action.action !== 'string') return null;
+
+  switch (action.action) {
+    case 'create_project':
+      if (!action.title) return null;
+      return {
+        action: 'create_project',
+        title: String(action.title),
+        description: action.description != null ? String(action.description) : null,
+      };
+    case 'update_project': {
+      const id = toId(action.id);
+      if (!id) return null;
+      const out = { action: 'update_project', id };
+      if (action.title != null) out.title = String(action.title);
+      if (action.description != null) out.description = String(action.description);
+      if (action.status != null && VALID_PROJECT_STATUS.has(action.status)) out.status = action.status;
+      return out;
+    }
+    case 'create_task':
+      if (!action.title) return null;
+      return {
+        action: 'create_task',
+        title: String(action.title),
+        description: action.description != null ? String(action.description) : null,
+        project_id: toId(action.project_id),
+        parent_id: toId(action.parent_id),
+        status: VALID_STATUS.has(action.status) ? action.status : 'todo',
+        priority: VALID_PRIORITY.has(action.priority) ? action.priority : 'medium',
+        due_date: action.due_date != null ? String(action.due_date) : null,
+        tags: Array.isArray(action.tags) ? action.tags.map(String) : [],
+      };
+    case 'update_task': {
+      const id = toId(action.id);
+      if (!id) return null;
+      const out = { action: 'update_task', id };
+      if (action.title != null) out.title = String(action.title);
+      if (action.description != null) out.description = String(action.description);
+      if (action.status != null && VALID_STATUS.has(action.status)) out.status = action.status;
+      if (action.priority != null && VALID_PRIORITY.has(action.priority)) out.priority = action.priority;
+      if (action.due_date != null) out.due_date = String(action.due_date);
+      if (Array.isArray(action.tags)) out.tags = action.tags.map(String);
+      return out;
+    }
+    case 'delete_task': {
+      const id = toId(action.id);
+      return id ? { action: 'delete_task', id } : null;
+    }
+    case 'log_activity':
+      if (action.note == null) return null;
+      return {
+        action: 'log_activity',
+        task_id: toId(action.task_id),
+        note: String(action.note),
+        hours_spent: action.hours_spent != null && !Number.isNaN(Number(action.hours_spent))
+          ? Number(action.hours_spent) : null,
+      };
+    case 'create_reminder':
+      if (action.message == null || action.remind_at == null) return null;
+      return {
+        action: 'create_reminder',
+        task_id: toId(action.task_id),
+        message: String(action.message),
+        remind_at: String(action.remind_at),
+        recurring: VALID_RECURRING.has(action.recurring) ? action.recurring : null,
+      };
+    default:
+      return null;
+  }
+}
+
+function executeAction(rawAction) {
+  // Re-validate at the point of execution. This covers both the chat path and
+  // the /execute-plan approval path (whose payload round-trips through the
+  // client and must not be trusted blindly).
+  const action = validateAction(rawAction);
+  if (!action) {
+    return { type: rawAction && rawAction.action, success: false, error: 'Invalid or unknown action' };
+  }
   switch (action.action) {
     case 'create_project': {
       const result = run('INSERT INTO projects (title, description) VALUES (?, ?)', [action.title, action.description || null]);

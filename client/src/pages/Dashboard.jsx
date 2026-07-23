@@ -98,6 +98,7 @@ export default function Dashboard() {
                 <span className={`w-2 h-2 rounded-full ${statusDot(t.status)}`} />
                 <span className="flex-1 text-sm">
                   {t.parent_id && <span className="text-slate-500 mr-1">↳</span>}
+                  <span className="text-slate-500 font-mono mr-1.5">#{t.id}</span>
                   <span className={t.status === 'archived' ? 'text-slate-500' : ''}>{t.title}</span>
                 </span>
                 <span className={`text-xs px-2 py-0.5 rounded ${priorityColor(t.priority)}`}>{t.priority}</span>
@@ -115,7 +116,7 @@ export default function Dashboard() {
           <div className="space-y-2">
             {overdue.map(t => (
               <div key={t.id} onClick={() => handleTaskClick(t)} className="bg-red-900/20 border border-red-800 rounded-lg p-3 flex justify-between cursor-pointer hover:border-red-600">
-                <span>{t.title}</span>
+                <span><span className="text-slate-500 font-mono mr-1.5">#{t.id}</span>{t.title}</span>
                 <span className="text-red-400 text-sm">{t.due_date?.split('T')[0]}</span>
               </div>
             ))}
@@ -153,6 +154,7 @@ export default function Dashboard() {
                   <span className={`w-2 h-2 rounded-full ${t.status === 'in_progress' ? 'bg-yellow-400' : 'bg-slate-500'}`} />
                   <span className="flex-1 text-sm">
                     {t.parent_id && <span className="text-slate-500 mr-1">↳</span>}
+                    <span className="text-slate-500 font-mono mr-1.5">#{t.id}</span>
                     {t.title}
                   </span>
                   <span className={`text-xs px-2 py-0.5 rounded ${priorityColor(t.priority)}`}>{t.priority}</span>

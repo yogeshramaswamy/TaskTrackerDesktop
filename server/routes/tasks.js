@@ -44,6 +44,19 @@ router.get('/:id/subtasks', (req, res) => {
   res.json(subtasks);
 });
 
+// Persist a manual ordering. Body: { ids: [taskId, ...] } in the desired
+// top-to-bottom order. sort_order is set to the array index for each id, so a
+// later "ORDER BY sort_order" reproduces exactly this arrangement.
+router.put('/reorder', (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids array is required' });
+
+  ids.forEach((id, index) => {
+    run("UPDATE tasks SET sort_order = ?, updated_at = datetime('now') WHERE id = ?", [index, Number(id)]);
+  });
+  res.json({ success: true, count: ids.length });
+});
+
 router.post('/', (req, res) => {
   const { project_id, parent_id, title, description, ticket_url, status, priority, start_date, due_date, tags } = req.body;
 
