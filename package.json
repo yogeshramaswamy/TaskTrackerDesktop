@@ -1,0 +1,62 @@
+{
+  "name": "tasktracker-desktop",
+  "version": "1.0.0",
+  "description": "TaskTracker - local desktop task manager with Claude AI",
+  "author": "Yogesh Ramaswamy",
+  "main": "electron/main.js",
+  "scripts": {
+    "postinstall": "cd client && npm install",
+    "build:client": "cd client && npm run build",
+    "start": "npm run build:client && node electron/launch.js",
+    "restart": "powershell -ExecutionPolicy Bypass -File ./restart.ps1",
+    "dev:server": "node server/index.js",
+    "dev:client": "cd client && npm run dev",
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dist": "npm run build:client && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win"
+  },
+  "dependencies": {
+    "@anthropic-ai/bedrock-sdk": "^0.12.0",
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@aws-sdk/credential-providers": "^3.1092.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.0",
+    "node-notifier": "^10.0.1",
+    "node-schedule": "^2.1.1",
+    "sql.js": "^1.11.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "cross-env": "^10.1.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.yramaswamy.tasktracker",
+    "productName": "TaskTracker",
+    "files": [
+      "electron/**/*",
+      "server/**/*",
+      "client/dist/**/*",
+      "!server/db/backups/**/*",
+      "!server/db/tasks.db",
+      "!server/seed.js",
+      "!server/seed-hayes.js",
+      "!.env",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,readme.md,.editorconfig,.travis.yml}",
+      "!**/node_modules/**/*.map"
+    ],
+    "extraResources": [],
+    "win": {
+      "target": [
+        "portable",
+        "zip"
+      ],
+      "signAndEditExecutable": false,
+      "artifactName": "TaskTracker-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "TaskTracker-${version}-portable.exe"
+    }
+  }
+}
