@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../lib/api';
+import TagInput, { TagChips, parseTags } from '../components/TagInput';
 
 const STATUSES = ['todo', 'in_progress', 'done', 'blocked'];
 const STATUS_LABELS = { todo: 'To Do', in_progress: 'In Progress', done: 'Done', blocked: 'Blocked' };
@@ -14,7 +15,7 @@ const PRIORITY_CHIP = {
   low:    { off: 'bg-slate-700/60 text-slate-400 hover:bg-slate-700', on: 'bg-slate-500 text-white ring-2 ring-slate-400' },
 };
 
-const DEFAULT_FILTERS = { project: 'all', priorities: [], dueDate: 'all', search: '', showArchived: false };
+const DEFAULT_FILTERS = { project: 'all', priorities: [], dueDate: 'all', search: '', showArchived: false, tags: [] };
 
 function isToday(d) {
   if (!d) return false;
@@ -45,11 +46,14 @@ export default function TaskBoard() {
   const [viewName, setViewName] = useState('');
   const location = useLocation();
 
+  const [tagLibrary, setTagLibrary] = useState([]);
+
   const load = useCallback(() => {
     const params = { parent_id: 'null' };
     if (filters.showArchived) params.include_archived = 'true';
     api.tasks.list(params).then(setTasks).catch(console.error);
     api.projects.list().then(setProjects).catch(console.error);
+    api.tags.list().then(setTagLibrary).catch(console.error);
   }, [filters.showArchived]);
 
   useEffect(() => { load(); }, [load]);
@@ -97,12 +101,38 @@ export default function TaskBoard() {
     if (filters.dueDate === 'this_week' && !isThisWeek(t.due_date)) return false;
     if (filters.dueDate === 'overdue' && !isOverdue(t.due_date)) return false;
     if (filters.search && !t.title.toLowerCase().includes(filters.search.toLowerCase())) return false;
+    if (filters.tags.length > 0) {
+      const taskTags = parseTags(t.tags);
+      // AND semantics: task must carry every selected tag.
+      if (!filters.tags.every(sel => taskTags.includes(sel))) return false;
+    }
     return true;
   }), [tasks, filters]);
 
+  // All distinct tags across the loaded tasks, for the filter dropdown.
+  const allTags = useMemo(() => {
+    const set = new Set();
+    tasks.forEach(t => parseTags(t.tags).forEach(tag => set.add(tag)));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [tasks]);
+
+  // name(lowercased) -> description, so cards can show a tag's meaning on hover.
+  const tagDescriptions = useMemo(() => {
+    const m = {};
+    tagLibrary.forEach(t => { if (t.description) m[t.name.toLowerCase()] = t.description; });
+    return m;
+  }, [tagLibrary]);
+
+  const toggleTag = (tag) => {
+    setFilters(f => ({
+      ...f,
+      tags: f.tags.includes(tag) ? f.tags.filter(x => x !== tag) : [...f.tags, tag],
+    }));
+  };
+
   const activeStatuses = filters.showArchived ? [...STATUSES, 'archived'] : STATUSES;
   const STATUS_LABELS_ALL = { ...STATUS_LABELS, archived: 'Archived' };
-  const hasActiveFilters = filters.project !== 'all' || filters.priorities.length > 0 || filters.dueDate !== 'all' || filters.search !== '' || filters.showArchived;
+  const hasActiveFilters = filters.project !== 'all' || filters.priorities.length > 0 || filters.dueDate !== 'all' || filters.search !== '' || filters.showArchived || filters.tags.length > 0;
 
   return (
     <div className="p-8">
@@ -208,6 +238,26 @@ export default function TaskBoard() {
           </label>
         </div>
 
+        {/* Row 3: tag filter chips (only when tags exist) */}
+        {allTags.length > 0 && (
+          <div className="flex flex-wrap gap-1 items-center">
+            <span className="text-xs text-slate-500 mr-0.5">Tags:</span>
+            {allTags.map(tag => (
+              <button
+                key={tag}
+                onClick={() => toggleTag(tag)}
+                className={`px-2 py-0.5 rounded text-xs font-medium transition-all ${
+                  filters.tags.includes(tag)
+                    ? 'bg-blue-600 text-white ring-2 ring-blue-400'
+                    : 'bg-slate-700/60 hover:bg-slate-700 text-slate-300'
+                }`}
+              >
+                #{tag}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Active filter tags */}
         {hasActiveFilters && (
           <div className="flex flex-wrap gap-1 pt-0.5 border-t border-slate-700/60">
@@ -234,6 +284,9 @@ export default function TaskBoard() {
             {filters.showArchived && (
               <FilterTag label="Archived" color="bg-purple-900/50 text-purple-300" onRemove={() => setFilters(f => ({ ...f, showArchived: false }))} />
             )}
+            {filters.tags.map(tag => (
+              <FilterTag key={tag} label={`#${tag}`} color="bg-blue-900/50 text-blue-300" onRemove={() => toggleTag(tag)} />
+            ))}
           </div>
         )}
 
@@ -264,6 +317,7 @@ export default function TaskBoard() {
                     key={task.id}
                     task={task}
                     projects={projects}
+                    tagDescriptions={tagDescriptions}
                     onStatusChange={updateStatus}
                     onEdit={(t) => { setEditTask(t); setShowForm(true); }}
                     onDelete={async (id) => { await api.tasks.delete(id); load(); }}
@@ -279,6 +333,7 @@ export default function TaskBoard() {
         <TaskForm
           task={editTask}
           projects={projects}
+          tagLibrary={tagLibrary}
           onClose={() => setShowForm(false)}
           onSave={load}
         />
@@ -296,11 +351,24 @@ function FilterTag({ label, color, onRemove }) {
   );
 }
 
-function TaskCard({ task, projects, onStatusChange, onEdit, onDelete }) {
+function TaskCard({ task, projects, tagDescriptions, onStatusChange, onEdit, onDelete }) {
   const navigate = useNavigate();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [descendants, setDescendants] = useState(null); // null = still loading
   const projectName = projects.find(p => p.id === task.project_id)?.title;
   const overdue = isOverdue(task.due_date) && task.status !== 'done' && task.status !== 'archived';
+
+  // Open the delete dialog, loading the full subtask tree first so the popup can
+  // warn exactly what a cascade delete will remove.
+  const openDeleteConfirm = async () => {
+    setDescendants(null);
+    setShowDeleteConfirm(true);
+    try {
+      setDescendants(await api.tasks.getDescendants(task.id));
+    } catch {
+      setDescendants([]); // fall back to a plain confirm if the lookup fails
+    }
+  };
 
   return (
     <div className="bg-slate-800 rounded-lg p-3">
@@ -311,12 +379,13 @@ function TaskCard({ task, projects, onStatusChange, onEdit, onDelete }) {
         </p>
         <div className="flex gap-1 shrink-0">
           <button onClick={() => onEdit(task)} className="text-xs text-blue-400 hover:text-blue-300 px-1.5 py-0.5 rounded bg-blue-900/20" title="Edit">✏️</button>
-          <button onClick={() => setShowDeleteConfirm(true)} className="text-xs text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded bg-red-900/20" title="Delete">🚮</button>
+          <button onClick={openDeleteConfirm} className="text-xs text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded bg-red-900/20" title="Delete">🚮</button>
         </div>
       </div>
       {showDeleteConfirm && (
         <ConfirmDelete
           title={task.title}
+          descendants={descendants}
           onConfirm={() => { onDelete(task.id); setShowDeleteConfirm(false); }}
           onCancel={() => setShowDeleteConfirm(false)}
         />
@@ -330,6 +399,7 @@ function TaskCard({ task, projects, onStatusChange, onEdit, onDelete }) {
           🎫 {task.ticket_url.replace(/^https?:\/\//, '').slice(0, 40)}
         </a>
       )}
+      <TagChips tags={task.tags} className="mt-1.5" descriptions={tagDescriptions} />
       <div className="flex items-center gap-2 mt-2">
         <select
           value={task.status}
@@ -357,7 +427,7 @@ function TaskCard({ task, projects, onStatusChange, onEdit, onDelete }) {
   );
 }
 
-function TaskForm({ task, projects, onClose, onSave }) {
+function TaskForm({ task, projects, tagLibrary = [], onClose, onSave }) {
   const [form, setForm] = useState({
     title: task?.title || '',
     description: task?.description || '',
@@ -367,6 +437,7 @@ function TaskForm({ task, projects, onClose, onSave }) {
     start_date: task?.start_date?.split('T')[0] || '',
     due_date: task?.due_date?.split('T')[0] || '',
     project_id: task?.project_id || '',
+    tags: parseTags(task?.tags),
   });
   const [notes, setNotes] = useState([]);
   const [newNote, setNewNote] = useState('');
@@ -470,6 +541,10 @@ function TaskForm({ task, projects, onClose, onSave }) {
                   <option value="">No project</option>
                   {projects.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
                 </select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">Tags</label>
+                <TagInput value={form.tags} onChange={tags => setForm({ ...form, tags })} suggestions={tagLibrary} />
               </div>
             </form>
           </div>
@@ -635,15 +710,46 @@ function NoteItem({ note, onUpdated }) {
   );
 }
 
-function ConfirmDelete({ title, onConfirm, onCancel }) {
+function ConfirmDelete({ title, descendants, onConfirm, onCancel }) {
+  const loading = descendants === null;
+  const count = descendants?.length || 0;
+  const hasSubtasks = count > 0;
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onCancel}>
-      <div className="bg-slate-800 rounded-xl p-6 w-full max-w-sm border border-slate-700" onClick={e => e.stopPropagation()}>
+      <div className="bg-slate-800 rounded-xl p-6 w-full max-w-md border border-slate-700" onClick={e => e.stopPropagation()}>
         <h4 className="font-semibold text-red-400 mb-2">Delete Task</h4>
-        <p className="text-sm text-slate-300 mb-4">Are you sure you want to delete "<span className="text-white">{title}</span>"? This cannot be undone.</p>
+        <p className="text-sm text-slate-300 mb-3">
+          Are you sure you want to delete "<span className="text-white">{title}</span>"? This cannot be undone.
+        </p>
+
+        {loading && <p className="text-xs text-slate-500 mb-4">Checking for subtasks…</p>}
+
+        {!loading && hasSubtasks && (
+          <div className="mb-4">
+            <p className="text-sm text-amber-300 bg-amber-900/20 border border-amber-800/50 rounded-lg px-3 py-2 mb-2">
+              ⚠️ This task has <span className="font-semibold">{count} subtask{count > 1 ? 's' : ''}</span> that will also be permanently deleted:
+            </p>
+            <div className="max-h-48 overflow-auto space-y-1 pr-1">
+              {descendants.map(d => (
+                <div
+                  key={d.id}
+                  className="text-xs text-slate-300 flex items-center gap-2 bg-slate-700/40 rounded px-2 py-1.5"
+                  style={{ marginLeft: (d.depth - 1) * 14 }}
+                >
+                  <span className="text-slate-500">↳</span>
+                  <span className={`flex-1 ${d.status === 'done' ? 'line-through text-slate-500' : ''}`}>{d.title}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="flex gap-3 justify-end">
           <button onClick={onCancel} className="px-4 py-2 text-sm text-slate-400 hover:text-white">No, Cancel</button>
-          <button onClick={onConfirm} className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-sm">Yes, Delete</button>
+          <button onClick={onConfirm} disabled={loading} className="bg-red-600 hover:bg-red-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm">
+            {hasSubtasks ? `Delete task + ${count} subtask${count > 1 ? 's' : ''}` : 'Yes, Delete'}
+          </button>
         </div>
       </div>
     </div>

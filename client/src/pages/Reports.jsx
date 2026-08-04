@@ -253,7 +253,7 @@ function ProjectReport({ project, tasks, subtasksMap, expandedTasks, taskNotes, 
                 className="bg-slate-800 rounded-lg p-3 flex items-center gap-3 cursor-pointer hover:border-slate-600 border border-transparent"
               >
                 <span className="text-sm font-mono text-slate-400 w-6">{idx + 1}.</span>
-                <span className={`flex-1 text-sm ${t.status === 'done' ? 'line-through text-slate-500' : ''}`}>{t.title}</span>
+                <span className={`flex-1 text-sm ${t.status === 'done' || t.status === 'archived' ? 'line-through text-slate-500' : ''}`}>{t.title}</span>
                 <span className={`text-xs px-2 py-0.5 rounded ${statusBadgeColor(t.status)}`}>{STATUS_LABELS[t.status]}</span>
                 <span className={`w-2.5 h-2.5 rounded-full ${STATUS_COLORS[t.status]}`} />
                 {(subtasksMap[t.id] || taskNotes[t.id]?.length) && (
@@ -267,7 +267,7 @@ function ProjectReport({ project, tasks, subtasksMap, expandedTasks, taskNotes, 
                   {subtasksMap[t.id] && subtasksMap[t.id].map((st, sIdx) => (
                     <div key={st.id} className="bg-slate-800/60 rounded-lg p-2.5 flex items-center gap-3">
                       <span className="text-xs font-mono text-slate-500 w-8">{idx + 1}.{sIdx + 1}</span>
-                      <span className={`flex-1 text-sm ${st.status === 'done' ? 'line-through text-slate-500' : ''}`}>{st.title}</span>
+                      <span className={`flex-1 text-sm ${st.status === 'done' || st.status === 'archived' ? 'line-through text-slate-500' : ''}`}>{st.title}</span>
                       <span className={`text-xs px-2 py-0.5 rounded ${statusBadgeColor(st.status)}`}>{STATUS_LABELS[st.status]}</span>
                       <span className={`w-2 h-2 rounded-full ${STATUS_COLORS[st.status]}`} />
                     </div>

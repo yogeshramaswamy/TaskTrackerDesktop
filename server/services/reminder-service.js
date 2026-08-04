@@ -31,7 +31,7 @@ function scheduleReminder(reminder) {
       const updated = get('SELECT * FROM reminders WHERE id = ?', [reminder.id]);
       scheduleReminder(updated);
     } else {
-      run('UPDATE reminders SET is_active = 0 WHERE id = ?', [reminder.id]);
+      run("UPDATE reminders SET is_active = 0, status = 'completed' WHERE id = ?", [reminder.id]);
     }
 
     scheduledJobs.delete(reminder.id);

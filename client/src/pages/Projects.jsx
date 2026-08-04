@@ -358,7 +358,7 @@ function SortableTaskRow({ task, index, draggable, expanded, subtasks, onToggle,
           >⠿</span>
         )}
         <span className="text-sm font-mono text-slate-400 w-6">{index + 1}.</span>
-        <span className={`flex-1 text-sm ${task.status === 'done' ? 'line-through text-slate-500' : ''}`}>{task.title}</span>
+        <span className={`flex-1 text-sm ${task.status === 'done' || task.status === 'archived' ? 'line-through text-slate-500' : ''}`}>{task.title}</span>
         <button
           onClick={(e) => { e.stopPropagation(); onOpen(); }}
           className="text-xs text-blue-400 hover:text-blue-300 px-1.5 py-0.5 rounded bg-blue-900/20 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -423,7 +423,7 @@ function SortableSubtaskRow({ subtask: st, label, draggable, onOpen, onUpdateFie
         >⠿</span>
       )}
       <span className="text-xs font-mono text-slate-500 w-8">{label}</span>
-      <span className={`flex-1 text-sm ${st.status === 'done' ? 'line-through text-slate-500' : ''}`}>{st.title}</span>
+      <span className={`flex-1 text-sm ${st.status === 'done' || st.status === 'archived' ? 'line-through text-slate-500' : ''}`}>{st.title}</span>
       <button
         onClick={(e) => { e.stopPropagation(); onOpen(); }}
         className="text-xs text-blue-400 hover:text-blue-300 px-1.5 py-0.5 rounded bg-blue-900/20 opacity-0 group-hover:opacity-100 transition-opacity"

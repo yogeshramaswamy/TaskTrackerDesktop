@@ -1,15 +1,46 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 
+// Collapsible accordion section. Body only mounts when open. Defined at module
+// scope (not inside Settings) so its identity is stable across renders —
+// otherwise inputs inside it would lose focus on every keystroke.
+function Section({ open, onToggle, title, titleClass = '', badge, children }) {
+  return (
+    <section className="mb-3 bg-slate-800 rounded-lg border border-slate-700 overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-700/40 text-left"
+      >
+        <span className="flex items-center gap-2">
+          <h3 className={`text-lg font-semibold ${titleClass}`}>{title}</h3>
+          {badge}
+        </span>
+        <span className={`text-slate-400 transition-transform ${open ? 'rotate-90' : ''}`}>▶</span>
+      </button>
+      {open && <div className="px-4 pb-4">{children}</div>}
+    </section>
+  );
+}
+
 export default function Settings() {
   const [backups, setBackups] = useState([]);
   const [pending, setPending] = useState([]);
   const [selected, setSelected] = useState([]);
   const [message, setMessage] = useState('');
 
+  // Tag library
+  const [tags, setTags] = useState([]);
+  const [tagForm, setTagForm] = useState({ name: '', description: '' });
+  const [editingTagId, setEditingTagId] = useState(null);
+  const [tagError, setTagError] = useState('');
+
   // Import (restore from a file chosen by the user)
   const [importCandidate, setImportCandidate] = useState(null); // { filePath, summary }
   const [importBusy, setImportBusy] = useState(false);
+
+  // Which accordion section is expanded (only one at a time).
+  const [openSection, setOpenSection] = useState('ai');
+  const toggleSection = (key) => setOpenSection(prev => (prev === key ? null : key));
 
   // AWS profile settings
   const [awsProfile, setAwsProfile] = useState('');
@@ -22,6 +53,7 @@ export default function Settings() {
   const load = () => {
     api.backups.list().then(setBackups).catch(console.error);
     api.claude.pendingDeletions().then(setPending).catch(console.error);
+    api.tags.list().then(setTags).catch(console.error);
     api.settings.get().then(s => {
       setAwsProfile(s.awsProfile || '');
       setAwsRegion(s.awsRegion || 'us-west-2');
@@ -146,6 +178,34 @@ export default function Settings() {
     load();
   };
 
+  const resetTagForm = () => { setTagForm({ name: '', description: '' }); setEditingTagId(null); setTagError(''); };
+
+  const saveTag = async () => {
+    const name = tagForm.name.trim();
+    if (!name) { setTagError('Tag name is required'); return; }
+    setTagError('');
+    try {
+      if (editingTagId) {
+        await api.tags.update(editingTagId, { name, description: tagForm.description.trim() });
+      } else {
+        await api.tags.create({ name, description: tagForm.description.trim() });
+      }
+      resetTagForm();
+      api.tags.list().then(setTags).catch(console.error);
+    } catch (err) {
+      setTagError(err.message);
+    }
+  };
+
+  const editTag = (t) => { setEditingTagId(t.id); setTagForm({ name: t.name, description: t.description || '' }); setTagError(''); };
+
+  const deleteTag = async (t) => {
+    if (!confirm(`Delete tag "${t.name}"?\n\nThis removes it from the library only — tags already on tasks stay put.`)) return;
+    await api.tags.delete(t.id);
+    if (editingTagId === t.id) resetTagForm();
+    api.tags.list().then(setTags).catch(console.error);
+  };
+
   return (
     <div className="p-8 max-w-3xl">
       <h2 className="text-2xl font-bold mb-6">Settings & Backups</h2>
@@ -156,15 +216,14 @@ export default function Settings() {
         </div>
       )}
 
-      <section className="mb-8">
-        <h3 className="text-lg font-semibold mb-2">AI Access (AWS Bedrock)</h3>
+      <Section open={openSection === 'ai'} onToggle={() => toggleSection('ai')} title="AI Access (AWS Bedrock)">
         <p className="text-xs text-slate-400 mb-4">
           Claude features use your local AWS Bedrock access. Enter your AWS profile name
           (the one from <span className="font-mono">~/.aws/config</span> that has Bedrock access).
           Region is fixed to <span className="font-mono">{awsRegion}</span>.
           {awsSource === 'env' && <span className="text-slate-500"> Currently using the profile from .env until you set one here.</span>}
         </p>
-        <div className="bg-slate-800 rounded-lg p-4 border border-slate-700 space-y-3">
+        <div className="bg-slate-900/40 rounded-lg p-4 border border-slate-700 space-y-3">
           <div>
             <label className="block text-xs text-slate-400 mb-1">AWS Profile Name</label>
             <input
@@ -202,12 +261,17 @@ export default function Settings() {
             </p>
           )}
         </div>
-      </section>
+      </Section>
 
       {pending.length > 0 && (
-        <section className="mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-orange-400">Pending Deletions ({pending.length})</h3>
+        <Section
+          open={openSection === 'pending'}
+          onToggle={() => toggleSection('pending')}
+          title="Pending Deletions"
+          titleClass="text-orange-400"
+          badge={<span className="text-xs bg-orange-600 text-white px-2 py-0.5 rounded-full">{pending.length}</span>}
+        >
+          <div className="flex items-center justify-end mb-3">
             <div className="flex gap-2">
               <button onClick={selectAll} className="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-lg">
                 {selected.length === pending.length ? 'Deselect All' : 'Select All'}
@@ -243,12 +307,66 @@ export default function Settings() {
               </div>
             ))}
           </div>
-        </section>
+        </Section>
       )}
 
-      <section className="mb-8">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-lg font-semibold">Backup &amp; Move Data</h3>
+      <Section
+        open={openSection === 'tags'}
+        onToggle={() => toggleSection('tags')}
+        title="Tag Library"
+        badge={tags.length > 0 && <span className="text-xs bg-slate-600 text-slate-200 px-2 py-0.5 rounded-full">{tags.length}</span>}
+      >
+        <p className="text-xs text-slate-400 mb-4">
+          Define reusable tags with a short description. When you add tags to a task or subtask,
+          these show up as autocomplete suggestions (press <span className="font-mono">Tab</span> to complete),
+          and the description appears on hover.
+        </p>
+        <div className="bg-slate-900/40 rounded-lg p-4 border border-slate-700">
+          <div className="flex flex-col sm:flex-row gap-2 mb-4">
+            <input
+              type="text"
+              value={tagForm.name}
+              onChange={e => setTagForm({ ...tagForm, name: e.target.value })}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); saveTag(); } }}
+              placeholder="Tag name (e.g. urgent)"
+              className="sm:w-48 bg-slate-700 rounded-lg px-3 py-2 text-sm"
+            />
+            <input
+              type="text"
+              value={tagForm.description}
+              onChange={e => setTagForm({ ...tagForm, description: e.target.value })}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); saveTag(); } }}
+              placeholder="Description (optional)"
+              className="flex-1 bg-slate-700 rounded-lg px-3 py-2 text-sm"
+            />
+            <button onClick={saveTag} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm whitespace-nowrap">
+              {editingTagId ? 'Save' : 'Add Tag'}
+            </button>
+            {editingTagId && (
+              <button onClick={resetTagForm} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm">Cancel</button>
+            )}
+          </div>
+          {tagError && <p className="text-xs text-red-400 mb-3">{tagError}</p>}
+
+          {tags.length === 0 ? (
+            <p className="text-sm text-slate-500">No tags defined yet. Add one above.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {tags.map(t => (
+                <div key={t.id} className="flex items-center gap-3 bg-slate-900/40 rounded-lg px-3 py-2">
+                  <span className="text-sm text-slate-200 font-medium whitespace-nowrap">#{t.name}</span>
+                  <span className="flex-1 text-xs text-slate-400 truncate">{t.description || <span className="italic text-slate-600">no description</span>}</span>
+                  <button onClick={() => editTag(t)} className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-700">Edit</button>
+                  <button onClick={() => deleteTag(t)} className="text-xs text-red-400 hover:text-red-300 px-2 py-1 rounded bg-slate-700">Delete</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Section>
+
+      <Section open={openSection === 'move'} onToggle={() => toggleSection('move')} title="Backup & Move Data">
+        <div className="flex items-center justify-end mb-3">
           <div className="flex gap-2">
             <button onClick={exportFile} className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-sm">Export…</button>
             <button onClick={pickImportFile} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm">Import…</button>
@@ -261,11 +379,10 @@ export default function Settings() {
           (<span className="font-mono">tasks.db</span>); it's validated first, and your current data is backed up
           automatically before it's replaced.
         </p>
-      </section>
+      </Section>
 
-      <section className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">Database Backups</h3>
+      <Section open={openSection === 'backups'} onToggle={() => toggleSection('backups')} title="Database Backups">
+        <div className="flex items-center justify-end mb-3">
           <button onClick={createBackup} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm">Create Backup Now</button>
         </div>
         <p className="text-xs text-slate-400 mb-4">
@@ -284,18 +401,17 @@ export default function Settings() {
             </div>
           ))}
         </div>
-      </section>
+      </Section>
 
-      <section>
-        <h3 className="text-lg font-semibold mb-3">How It Works</h3>
-        <div className="bg-slate-800 rounded-lg p-4 border border-slate-700 text-sm text-slate-300 space-y-2">
+      <Section open={openSection === 'how'} onToggle={() => toggleSection('how')} title="How It Works">
+        <div className="bg-slate-900/40 rounded-lg p-4 border border-slate-700 text-sm text-slate-300 space-y-2">
           <p>- A backup is automatically saved <strong>before every Claude AI action</strong></p>
           <p>- When Claude suggests deleting a task, it goes to <strong>Pending Deletions</strong> above</p>
           <p>- You can approve (select + delete) or dismiss (keep the task)</p>
           <p>- Last 20 backups are kept, older ones are auto-removed</p>
           <p>- To restore: click "Restore" on any backup, then restart the server</p>
         </div>
-      </section>
+      </Section>
 
       {importCandidate && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => !importBusy && setImportCandidate(null)}>

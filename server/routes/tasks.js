@@ -19,10 +19,19 @@ router.get('/', (req, res) => {
 
   if (status) { query += ' AND status = ?'; params.push(status); }
   if (priority) { query += ' AND priority = ?'; params.push(priority); }
-  if (project_id) { query += ' AND project_id = ?'; params.push(Number(project_id)); }
+  if (project_id) {
+    if (project_id === 'none') {
+      query += ' AND project_id IS NULL';
+    } else {
+      query += ' AND project_id = ?'; params.push(Number(project_id));
+    }
+  }
   if (parent_id !== undefined) {
     if (parent_id === 'null') {
       query += ' AND parent_id IS NULL';
+    } else if (parent_id === 'any') {
+      // Every subtask (any task that has a parent), regardless of which one.
+      query += ' AND parent_id IS NOT NULL';
     } else {
       query += ' AND parent_id = ?'; params.push(Number(parent_id));
     }
@@ -42,6 +51,37 @@ router.get('/:id', (req, res) => {
 router.get('/:id/subtasks', (req, res) => {
   const subtasks = all('SELECT * FROM tasks WHERE parent_id = ? ORDER BY created_at ASC', [Number(req.params.id)]);
   res.json(subtasks);
+});
+
+// Return every descendant of a task (its subtasks, their subtasks, ... all the
+// way down), each tagged with its depth. Used by the delete confirmation so the
+// user can see exactly what a cascade delete will remove. Depth is capped as a
+// guard against a cyclic parent_id chain.
+router.get('/:id/descendants', (req, res) => {
+  const rootId = Number(req.params.id);
+  const descendants = [];
+  let frontier = [rootId];
+  let depth = 1;
+  const seen = new Set([rootId]);
+
+  while (frontier.length && depth <= 20) {
+    const placeholders = frontier.map(() => '?').join(',');
+    const children = all(
+      `SELECT id, title, status, parent_id FROM tasks WHERE parent_id IN (${placeholders})`,
+      frontier
+    );
+    const next = [];
+    for (const child of children) {
+      if (seen.has(child.id)) continue; // guard against cycles
+      seen.add(child.id);
+      descendants.push({ ...child, depth });
+      next.push(child.id);
+    }
+    frontier = next;
+    depth++;
+  }
+
+  res.json(descendants);
 });
 
 // Persist a manual ordering. Body: { ids: [taskId, ...] } in the desired

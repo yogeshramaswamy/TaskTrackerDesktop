@@ -14,6 +14,7 @@ const reportsRouter = require('./routes/reports');
 const journalRouter = require('./routes/journal');
 const backupRouter = require('./routes/backup');
 const settingsRouter = require('./routes/settings');
+const tagsRouter = require('./routes/tags');
 
 const app = express();
 
@@ -35,6 +36,7 @@ app.use('/api/reports', reportsRouter);
 app.use('/api/journal', journalRouter);
 app.use('/api/backups', backupRouter);
 app.use('/api/settings', settingsRouter);
+app.use('/api/tags', tagsRouter);
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../client/dist/index.html'));

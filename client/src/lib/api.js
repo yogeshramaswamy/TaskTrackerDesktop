@@ -20,6 +20,7 @@ export const api = {
     },
     get: (id) => request(`/tasks/${id}`),
     getSubtasks: (id) => request(`/tasks/${id}/subtasks`),
+    getDescendants: (id) => request(`/tasks/${id}/descendants`),
     create: (data) => request('/tasks', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) => request(`/tasks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id) => request(`/tasks/${id}`, { method: 'DELETE' }),
@@ -54,6 +55,7 @@ export const api = {
   },
   reminders: {
     list: () => request('/reminders'),
+    listCompleted: () => request('/reminders?status=completed'),
     create: (data) => request('/reminders', { method: 'POST', body: JSON.stringify(data) }),
     delete: (id) => request(`/reminders/${id}`, { method: 'DELETE' }),
   },
@@ -74,6 +76,12 @@ export const api = {
     exportFile: () => request('/backups/export', { method: 'POST' }),
     importPick: () => request('/backups/import/pick', { method: 'POST' }),
     importConfirm: (filePath) => request('/backups/import/confirm', { method: 'POST', body: JSON.stringify({ filePath }) }),
+  },
+  tags: {
+    list: () => request('/tags'),
+    create: (data) => request('/tags', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/tags/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id) => request(`/tags/${id}`, { method: 'DELETE' }),
   },
   settings: {
     get: () => request('/settings'),

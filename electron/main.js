@@ -87,6 +87,9 @@ function createWindow() {
     minHeight: 600,
     backgroundColor: '#0f172a',
     title: 'TaskTracker',
+    // Window/taskbar icon for the running app (dev + unpackaged). The packaged
+    // build gets its icon from build.win.icon in package.json instead.
+    icon: path.join(app.getAppPath(), 'build', 'icon.ico'),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -125,6 +128,9 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
+    // Windows groups taskbar buttons by AppUserModelID; setting it makes the
+    // taskbar use our window icon instead of the default Electron one in dev.
+    if (process.platform === 'win32') app.setAppUserModelId('com.yramaswamy.tasktracker');
     const appUrl = `http://localhost:${PORT}/`;
     // Reuse an already-running server; otherwise start our own.
     if (!(await isServerUp(appUrl))) {

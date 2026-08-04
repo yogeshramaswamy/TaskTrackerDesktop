@@ -4,13 +4,16 @@ const { run, all, get } = require('../db/database');
 const { scheduleReminder, cancelReminder } = require('../services/reminder-service');
 
 router.get('/', (req, res) => {
+  // ?status=completed returns fired reminders; default returns active ones.
+  // Deleted reminders (status='deleted') are never returned.
+  const wantCompleted = req.query.status === 'completed';
   const reminders = all(`
     SELECT r.*, t.title as task_title, t.parent_id as task_parent_id
     FROM reminders r
     LEFT JOIN tasks t ON r.task_id = t.id
-    WHERE r.is_active = 1
-    ORDER BY r.remind_at ASC
-  `);
+    WHERE r.status = ?
+    ORDER BY r.remind_at ${wantCompleted ? 'DESC' : 'ASC'}
+  `, [wantCompleted ? 'completed' : 'active']);
   res.json(reminders);
 });
 
@@ -24,7 +27,7 @@ router.post('/', (req, res) => {
 
 router.delete('/:id', (req, res) => {
   cancelReminder(Number(req.params.id));
-  const result = run('UPDATE reminders SET is_active = 0 WHERE id = ?', [Number(req.params.id)]);
+  const result = run("UPDATE reminders SET is_active = 0, status = 'deleted' WHERE id = ?", [Number(req.params.id)]);
   if (result.changes === 0) return res.status(404).json({ error: 'Reminder not found' });
   res.json({ success: true });
 });

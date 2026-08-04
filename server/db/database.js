@@ -44,6 +44,16 @@ function initDb() {
     try { db.exec('ALTER TABLE tasks ADD COLUMN start_date DATETIME'); } catch (e) { /* already exists */ }
     try { db.exec('ALTER TABLE tasks ADD COLUMN ticket_url TEXT'); } catch (e) { /* already exists */ }
     try { db.exec('ALTER TABLE tasks ADD COLUMN sort_order INTEGER'); } catch (e) { /* already exists */ }
+    // reminders.status disambiguates what is_active=0 meant historically:
+    // 'active' (pending), 'completed' (fired), 'deleted' (user-removed / snooze-edit artifact).
+    try {
+      db.exec("ALTER TABLE reminders ADD COLUMN status TEXT DEFAULT 'active'");
+      // Backfill existing rows: is_active=1 -> active. is_active=0 rows are
+      // treated as completed (fired) — the historical soft-delete path can't be
+      // distinguished, but going forward delete/snooze set status='deleted'.
+      db.exec("UPDATE reminders SET status = 'active' WHERE is_active = 1");
+      db.exec("UPDATE reminders SET status = 'completed' WHERE is_active = 0");
+    } catch (e) { /* already exists */ }
 
     // Pending deletions table
     db.exec(`CREATE TABLE IF NOT EXISTS pending_deletions (
@@ -65,8 +75,20 @@ function getDb() {
   return db;
 }
 
-function saveDb() {
+// sql.js quirk: db.export() serializes the database and, as a side effect,
+// resets connection PRAGMAs — including foreign_keys — back to OFF. Since we
+// export on every write, foreign-key enforcement would silently switch off
+// after the first save, so ON DELETE CASCADE (subtasks) / SET NULL (project)
+// would stop firing. Always export through this helper so the pragma is
+// re-asserted immediately afterward and cascades keep working.
+function exportDb() {
   const data = db.export();
+  db.exec('PRAGMA foreign_keys = ON');
+  return data;
+}
+
+function saveDb() {
+  const data = exportDb();
   const buffer = Buffer.from(data);
   fs.writeFileSync(DB_PATH, buffer);
 }
@@ -75,7 +97,7 @@ function backupDb() {
   if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backupPath = path.join(BACKUP_DIR, `tasks-${timestamp}.db`);
-  const data = db.export();
+  const data = exportDb();
   fs.writeFileSync(backupPath, Buffer.from(data));
 
   // Keep only last 20 backups
@@ -103,7 +125,7 @@ function listBackups() {
 // OneDrive folder or USB drive). Exports from memory, so it's always a
 // consistent snapshot even while the app is running.
 function exportDbTo(destPath) {
-  const data = db.export();
+  const data = exportDb();
   fs.writeFileSync(destPath, Buffer.from(data));
   return destPath;
 }

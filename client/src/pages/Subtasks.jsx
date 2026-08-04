@@ -1,29 +1,67 @@
-import { useState, useEffect } from 'react';
-import { useSearchParams, useLocation } from 'react-router-dom';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useSearchParams, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
+import TagInput, { TagChips, parseTags } from '../components/TagInput';
 
 const STATUSES = ['todo', 'in_progress', 'done', 'blocked'];
 const STATUS_LABELS = { todo: 'To Do', in_progress: 'In Progress', done: 'Done', blocked: 'Blocked' };
 const STATUS_COLORS = { todo: 'border-slate-600', in_progress: 'border-yellow-600', done: 'border-green-600', blocked: 'border-red-600' };
 
+const PRIORITIES = ['urgent', 'high', 'medium', 'low'];
+const PRIORITY_CHIP = {
+  urgent: { off: 'bg-red-900/40 text-red-400 hover:bg-red-900/70', on: 'bg-red-600 text-white ring-2 ring-red-400' },
+  high:   { off: 'bg-orange-900/40 text-orange-400 hover:bg-orange-900/70', on: 'bg-orange-500 text-white ring-2 ring-orange-400' },
+  medium: { off: 'bg-yellow-900/40 text-yellow-400 hover:bg-yellow-900/70', on: 'bg-yellow-500 text-white ring-2 ring-yellow-400' },
+  low:    { off: 'bg-slate-700/60 text-slate-400 hover:bg-slate-700', on: 'bg-slate-500 text-white ring-2 ring-slate-400' },
+};
+
+const DEFAULT_SUB_FILTERS = { priorities: [], dueDate: 'all', search: '' };
+
+function isToday(d) {
+  if (!d) return false;
+  const dt = new Date(d), t = new Date();
+  return dt.getFullYear() === t.getFullYear() && dt.getMonth() === t.getMonth() && dt.getDate() === t.getDate();
+}
+function isThisWeek(d) {
+  if (!d) return false;
+  const dt = new Date(d), now = new Date();
+  const start = new Date(now); start.setDate(now.getDate() - now.getDay());
+  const end = new Date(start); end.setDate(start.getDate() + 6);
+  return dt >= start && dt <= end;
+}
+function isOverdue(d) {
+  if (!d) return false;
+  return new Date(d) < new Date() && !isToday(d);
+}
+
 export default function Subtasks() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [tasks, setTasks] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [subtasks, setSubtasks] = useState([]);
   const [selectedTaskId, setSelectedTaskId] = useState(searchParams.get('task') || '');
+  // Project mode: when set, show every subtask under that project regardless of
+  // which parent task it belongs to. Mutually exclusive with the parent picker.
+  const [projectFilter, setProjectFilter] = useState(searchParams.get('project') || '');
   const [showForm, setShowForm] = useState(false);
   const [editTask, setEditTask] = useState(null);
   const [pendingEditId, setPendingEditId] = useState(null);
+  const [filters, setFilters] = useState(DEFAULT_SUB_FILTERS);
   const location = useLocation();
+
+  const [tagLibrary, setTagLibrary] = useState([]);
 
   useEffect(() => {
     api.tasks.list({ parent_id: 'null' }).then(setTasks).catch(console.error);
+    api.projects.list().then(setProjects).catch(console.error);
+    api.tags.list().then(setTagLibrary).catch(console.error);
   }, []);
 
   useEffect(() => {
     if (location.state?.taskId && location.state?.parentId) {
       const parentId = String(location.state.parentId);
       const editId = String(location.state.taskId);
+      setProjectFilter('');
       setSelectedTaskId(parentId);
       setPendingEditId(editId);
       api.tasks.getSubtasks(parentId).then(data => {
@@ -34,19 +72,24 @@ export default function Subtasks() {
     }
   }, [location.state]);
 
+  // Project mode takes priority over the parent-task picker.
   useEffect(() => {
-    if (selectedTaskId) {
-      api.tasks.getSubtasks(selectedTaskId).then(data => {
-        setSubtasks(data);
-      }).catch(console.error);
+    if (projectFilter) {
+      api.tasks.list({ parent_id: 'any', project_id: projectFilter }).then(setSubtasks).catch(console.error);
+      setSearchParams({ project: projectFilter });
+    } else if (selectedTaskId) {
+      api.tasks.getSubtasks(selectedTaskId).then(setSubtasks).catch(console.error);
       setSearchParams({ task: selectedTaskId });
     } else {
       setSubtasks([]);
+      setSearchParams({});
     }
-  }, [selectedTaskId]);
+  }, [selectedTaskId, projectFilter]);
 
   const loadSubtasks = () => {
-    if (selectedTaskId) {
+    if (projectFilter) {
+      api.tasks.list({ parent_id: 'any', project_id: projectFilter }).then(setSubtasks).catch(console.error);
+    } else if (selectedTaskId) {
       api.tasks.getSubtasks(selectedTaskId).then(setSubtasks).catch(console.error);
     }
   };
@@ -56,6 +99,40 @@ export default function Subtasks() {
     await api.tasks.update(id, { status });
     loadSubtasks();
   };
+
+  const togglePriority = (p) => {
+    setFilters(f => ({
+      ...f,
+      priorities: f.priorities.includes(p) ? f.priorities.filter(x => x !== p) : [...f.priorities, p],
+    }));
+  };
+
+  const filteredSubtasks = useMemo(() => subtasks.filter(t => {
+    if (filters.priorities.length > 0 && !filters.priorities.includes(t.priority)) return false;
+    if (filters.dueDate === 'today' && !isToday(t.due_date)) return false;
+    if (filters.dueDate === 'this_week' && !isThisWeek(t.due_date)) return false;
+    if (filters.dueDate === 'overdue' && !isOverdue(t.due_date)) return false;
+    if (filters.search && !t.title.toLowerCase().includes(filters.search.toLowerCase())) return false;
+    return true;
+  }), [subtasks, filters]);
+
+  const hasActiveFilters = filters.priorities.length > 0 || filters.dueDate !== 'all' || filters.search !== '';
+
+  // Map task id -> title so project mode can label each subtask with its parent.
+  // Built from top-level tasks plus the loaded subtasks (a parent may itself be
+  // a subtask when nesting is deeper than one level).
+  const parentTitleById = useMemo(() => {
+    const m = new Map();
+    tasks.forEach(t => m.set(t.id, t.title));
+    subtasks.forEach(t => m.set(t.id, t.title));
+    return m;
+  }, [tasks, subtasks]);
+
+  const tagDescriptions = useMemo(() => {
+    const m = {};
+    tagLibrary.forEach(t => { if (t.description) m[t.name.toLowerCase()] = t.description; });
+    return m;
+  }, [tagLibrary]);
 
   const selectedTask = tasks.find(t => String(t.id) === String(selectedTaskId));
 
@@ -68,37 +145,123 @@ export default function Subtasks() {
         )}
       </div>
 
-      <div className="mb-6 bg-slate-800 rounded-lg p-4">
-        <label className="text-sm text-slate-400 block mb-2">Select Parent Task</label>
-        <select
-          value={selectedTaskId}
-          onChange={e => setSelectedTaskId(e.target.value)}
-          className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
-        >
-          <option value="">-- Choose a task --</option>
-          {tasks.map(t => (
-            <option key={t.id} value={t.id}>[{t.status}] {t.title}</option>
-          ))}
-        </select>
-        {selectedTask && selectedTask.description && (
-          <p className="text-xs text-slate-400 mt-2">{selectedTask.description}</p>
-        )}
+      <div className="mb-6 bg-slate-800 rounded-lg p-4 grid grid-cols-10 gap-4">
+        {/* 70% parent-task picker, 30% project filter */}
+        <div className="col-span-7">
+          <label className="text-sm text-slate-400 block mb-2">Select Parent Task</label>
+          <ParentTaskPicker
+            tasks={tasks}
+            selectedTask={selectedTask}
+            onSelect={(id) => { setProjectFilter(''); setSelectedTaskId(id); }}
+          />
+          {selectedTask && selectedTask.description && (
+            <p className="text-xs text-slate-400 mt-2">{selectedTask.description}</p>
+          )}
+        </div>
+        <div className="col-span-3">
+          <label className="text-sm text-slate-400 block mb-2">Or filter by Project</label>
+          <select
+            value={projectFilter}
+            onChange={e => { setSelectedTaskId(''); setProjectFilter(e.target.value); }}
+            className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
+          >
+            <option value="">-- Choose a project --</option>
+            <option value="none">No project</option>
+            {projects.filter(p => !p.synthetic).map(p => (
+              <option key={p.id} value={p.id}>{p.title}</option>
+            ))}
+          </select>
+          {projectFilter && (
+            <p className="text-xs text-slate-400 mt-2">
+              Showing all subtasks in this project ({subtasks.length}) across every parent task.
+            </p>
+          )}
+        </div>
       </div>
 
-      {!selectedTaskId && (
+      {/* Filter bar — mirrors the Task Board, shown once a parent task or project is picked */}
+      {(selectedTaskId || projectFilter) && (
+      <div className="bg-slate-800/60 rounded-xl p-3 mb-5 space-y-2.5">
+          {/* Row 1: search */}
+          <div className="flex gap-2 items-center flex-wrap">
+            <div className="relative flex-1 min-w-[180px]">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs pointer-events-none">🔍</span>
+              <input
+                className="w-full bg-slate-700 rounded-lg pl-7 pr-3 py-1.5 text-sm placeholder:text-slate-500"
+                placeholder="Search subtasks..."
+                value={filters.search}
+                onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
+              />
+            </div>
+            {hasActiveFilters && (
+              <button
+                onClick={() => setFilters(DEFAULT_SUB_FILTERS)}
+                className="text-xs text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg border border-slate-600 hover:border-slate-400 whitespace-nowrap"
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+
+          {/* Row 2: priority + due date */}
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="flex gap-1 items-center">
+              <span className="text-xs text-slate-500 mr-0.5">Priority:</span>
+              {PRIORITIES.map(p => (
+                <button
+                  key={p}
+                  onClick={() => togglePriority(p)}
+                  className={`px-2 py-0.5 rounded text-xs font-medium capitalize transition-all ${filters.priorities.includes(p) ? PRIORITY_CHIP[p].on : PRIORITY_CHIP[p].off}`}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-1 items-center">
+              <span className="text-xs text-slate-500 mr-0.5">Due:</span>
+              {[['all', 'All'], ['today', 'Today'], ['this_week', 'This Week'], ['overdue', 'Overdue']].map(([val, label]) => (
+                <button
+                  key={val}
+                  onClick={() => setFilters(f => ({ ...f, dueDate: val }))}
+                  className={`px-2 py-0.5 rounded text-xs font-medium transition-all ${
+                    filters.dueDate === val
+                      ? 'bg-blue-600 text-white'
+                      : val === 'overdue'
+                        ? 'bg-slate-600/60 hover:bg-slate-600 text-red-400'
+                        : 'bg-slate-600/60 hover:bg-slate-600 text-slate-300'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+      </div>
+      )}
+
+      {!selectedTaskId && !projectFilter && (
         <div className="text-center text-slate-500 mt-12">
-          <p className="text-lg">Select a parent task to view its subtasks</p>
+          <p className="text-lg">Select a parent task, or pick a project to see all its subtasks</p>
         </div>
       )}
 
-      {selectedTaskId && (
+      {(selectedTaskId || projectFilter) && (
         <div className="grid grid-cols-4 gap-4">
           {STATUSES.map(status => (
             <div key={status} className={`border-t-2 ${STATUS_COLORS[status]} rounded-lg bg-slate-800/50 p-3`}>
-              <h3 className="text-sm font-semibold mb-3 text-slate-300">{STATUS_LABELS[status]} ({subtasks.filter(t => t.status === status).length})</h3>
+              <h3 className="text-sm font-semibold mb-3 text-slate-300">{STATUS_LABELS[status]} ({filteredSubtasks.filter(t => t.status === status).length})</h3>
               <div className="space-y-2">
-                {subtasks.filter(t => t.status === status).map(task => (
-                  <SubtaskCard key={task.id} task={task} onStatusChange={updateStatus} onEdit={(t) => { setEditTask(t); setShowForm(true); }} onDelete={async (id) => { await api.tasks.delete(id); loadSubtasks(); }} />
+                {filteredSubtasks.filter(t => t.status === status).map(task => (
+                  <SubtaskCard
+                    key={task.id}
+                    task={task}
+                    showParent={!!projectFilter}
+                    parentTitle={parentTitleById.get(task.parent_id)}
+                    tagDescriptions={tagDescriptions}
+                    onStatusChange={updateStatus}
+                    onEdit={(t) => { setEditTask(t); setShowForm(true); }}
+                    onDelete={async (id) => { await api.tasks.delete(id); loadSubtasks(); }}
+                  />
                 ))}
               </div>
             </div>
@@ -110,7 +273,9 @@ export default function Subtasks() {
         <SubtaskForm
           task={editTask}
           parentId={selectedTaskId}
+          parentTask={selectedTask}
           parentProjectId={selectedTask?.project_id}
+          tagLibrary={tagLibrary}
           onClose={() => setShowForm(false)}
           onSave={() => { loadSubtasks(); setShowForm(false); }}
         />
@@ -119,11 +284,98 @@ export default function Subtasks() {
   );
 }
 
-function SubtaskCard({ task, onStatusChange, onEdit, onDelete }) {
+// Searchable parent-task selector: a text box you can type in to filter the
+// list, plus a click-to-select dropdown. Replaces the plain <select> so long
+// task lists are easy to narrow down.
+function ParentTaskPicker({ tasks, selectedTask, onSelect }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const wrapRef = useRef(null);
+
+  // Close the dropdown when clicking outside it.
+  useEffect(() => {
+    const onDocClick = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? tasks.filter(t =>
+        t.title.toLowerCase().includes(q) ||
+        String(t.id).includes(q) ||
+        (t.status || '').toLowerCase().includes(q)
+      )
+    : tasks;
+
+  const choose = (id) => {
+    onSelect(id);
+    setQuery('');
+    setOpen(false);
+  };
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <input
+        type="text"
+        value={open ? query : (selectedTask ? `[${selectedTask.status}] ${selectedTask.title}` : query)}
+        placeholder="-- Choose a task -- (type to search)"
+        onFocus={() => setOpen(true)}
+        onChange={e => { setQuery(e.target.value); setOpen(true); }}
+        className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
+      />
+      {selectedTask && (
+        <button
+          type="button"
+          onClick={() => { choose(''); }}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-sm"
+          title="Clear selection"
+        >
+          ✕
+        </button>
+      )}
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-slate-800 border border-slate-600 rounded-lg shadow-xl max-h-72 overflow-auto">
+          <button
+            type="button"
+            onClick={() => choose('')}
+            className="w-full text-left px-4 py-2 text-sm text-slate-400 hover:bg-slate-700"
+          >
+            -- Choose a task --
+          </button>
+          {filtered.length === 0 && (
+            <p className="px-4 py-2 text-sm text-slate-500">No matching tasks</p>
+          )}
+          {filtered.map(t => (
+            <button
+              type="button"
+              key={t.id}
+              onClick={() => choose(String(t.id))}
+              className={`w-full text-left px-4 py-2 text-sm hover:bg-slate-700 ${String(t.id) === String(selectedTask?.id) ? 'bg-slate-700 text-blue-400' : 'text-white'}`}
+            >
+              <span className="text-slate-500 font-mono mr-1.5">#{t.id}</span>
+              <span className="text-slate-500 mr-1.5">[{t.status}]</span>
+              {t.title}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SubtaskCard({ task, onStatusChange, onEdit, onDelete, showParent, parentTitle, tagDescriptions }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   return (
     <div className="bg-slate-800 rounded-lg p-3">
+      {showParent && (
+        <p className="text-[11px] text-slate-500 mb-1 truncate" title={parentTitle}>
+          ↳ under: <span className="text-slate-400">{parentTitle || `#${task.parent_id}`}</span>
+        </p>
+      )}
       <div className="flex items-start justify-between">
         <p className="text-sm font-medium flex-1">
           <span className="text-slate-500 font-mono mr-1.5">#{task.id}</span>
@@ -135,6 +387,7 @@ function SubtaskCard({ task, onStatusChange, onEdit, onDelete }) {
         </div>
       </div>
       {task.description && <p className="text-xs text-slate-400 mt-1">{task.description}</p>}
+      <TagChips tags={task.tags} className="mt-1.5" descriptions={tagDescriptions} />
       <div className="flex items-center gap-2 mt-2">
         <select
           value={task.status}
@@ -226,7 +479,8 @@ function ConfirmDelete({ title, onConfirm, onCancel }) {
   );
 }
 
-function SubtaskForm({ task, parentId, parentProjectId, onClose, onSave }) {
+function SubtaskForm({ task, parentId, parentTask, parentProjectId, tagLibrary = [], onClose, onSave }) {
+  const navigate = useNavigate();
   const [form, setForm] = useState({
     title: task?.title || '',
     description: task?.description || '',
@@ -235,6 +489,7 @@ function SubtaskForm({ task, parentId, parentProjectId, onClose, onSave }) {
     priority: task?.priority || 'medium',
     start_date: task?.start_date?.split('T')[0] || '',
     due_date: task?.due_date?.split('T')[0] || '',
+    tags: parseTags(task?.tags),
   });
   const [notes, setNotes] = useState([]);
   const [newNote, setNewNote] = useState('');
@@ -284,7 +539,22 @@ function SubtaskForm({ task, parentId, parentProjectId, onClose, onSave }) {
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700 shrink-0">
-          <h3 className="text-lg font-bold">{task ? 'Edit Subtask' : 'New Subtask'}</h3>
+          <div>
+            <h3 className="text-lg font-bold">{task ? 'Edit Subtask' : 'New Subtask'}</h3>
+            {parentTask && (
+              <p className="text-xs text-slate-400 mt-0.5">
+                Parent task:{' '}
+                <button
+                  type="button"
+                  onClick={() => navigate('/tasks', { state: { taskId: parentTask.id } })}
+                  className="text-blue-400 hover:text-blue-300 underline decoration-dotted"
+                  title="Go to parent task"
+                >
+                  {parentTask.title} →
+                </button>
+              </p>
+            )}
+          </div>
           <button onClick={onClose} className="text-slate-400 hover:text-white text-xl leading-none">✕</button>
         </div>
 
@@ -331,6 +601,10 @@ function SubtaskForm({ task, parentId, parentProjectId, onClose, onSave }) {
                   <label className="text-xs text-slate-400 block mb-1">End Date</label>
                   <input type="date" className="w-full bg-slate-700 rounded-lg px-3 py-1.5 text-sm" value={form.due_date} onChange={e => setForm({ ...form, due_date: e.target.value })} />
                 </div>
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">Tags</label>
+                <TagInput value={form.tags} onChange={tags => setForm({ ...form, tags })} suggestions={tagLibrary} />
               </div>
             </form>
           </div>

@@ -39,6 +39,15 @@ CREATE TABLE IF NOT EXISTS reminders (
     remind_at   DATETIME NOT NULL,
     recurring   TEXT,
     is_active   INTEGER DEFAULT 1,
+    status      TEXT DEFAULT 'active',
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS tag_library (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT UNIQUE NOT NULL,
+    description TEXT,
+    color       TEXT,
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

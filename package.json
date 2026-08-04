@@ -50,14 +50,20 @@
     "win": {
       "icon": "build/icon.ico",
       "target": [
-        "portable",
+        "nsis",
         "zip"
       ],
       "signAndEditExecutable": false,
       "artifactName": "TaskTracker-${version}.${ext}"
     },
-    "portable": {
-      "artifactName": "TaskTracker-${version}-portable.exe"
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TaskTracker",
+      "artifactName": "TaskTracker-Setup-${version}.${ext}"
     }
   }
 }
