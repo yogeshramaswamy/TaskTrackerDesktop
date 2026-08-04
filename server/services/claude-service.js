@@ -1,11 +1,11 @@
 const { getAiClient } = require('./ai-client');
-const { run, all, get, backupDb } = require('../db/database');
+const { run, all, get, backupDb, transaction } = require('../db/database');
 
 const SYSTEM_PROMPT = `You are a personal task management assistant integrated into TaskTracker Pro. You help the user manage their work tasks, projects, and track progress.
 
 AVAILABLE ACTIONS:
 1. create_project: {action: "create_project", title: "...", description: "..."}
-2. create_task: {action: "create_task", title: "...", description: "...", project_id: null|number, parent_id: null|number, priority: "low|medium|high|urgent", due_date: null|"YYYY-MM-DD", tags: [...]}
+2. create_task: {action: "create_task", title: "...", description: "...", project_id: null|number, parent_id: null|number, priority: "low|medium|high|urgent", due_date: null|"YYYY-MM-DD", tags: [...], subtasks: [...]}
 3. update_task: {action: "update_task", id: number, ...fields_to_update}
 4. delete_task: {action: "delete_task", id: number}
 5. log_activity: {action: "log_activity", task_id: number|null, note: "...", hours_spent: number|null}
@@ -28,7 +28,11 @@ CRITICAL RULES FOR proposed_actions vs actions:
 - Note: the app enforces this server-side — any create_* or update_* you place in "actions" is moved to the approval plan automatically, so prefer proposed_actions directly
 
 RULES:
-- When creating subtasks, use parent_id to link them to a parent task
+- CREATING SUBTASKS FOR A NEW TASK: nest them in the parent's "subtasks" array — do NOT emit them as separate create_task actions and do NOT try to guess a parent_id. Example — "create a Launch task with subtasks Design, Build, Test":
+  {"action":"create_task","title":"Launch","subtasks":[
+    {"title":"Design"},{"title":"Build"},{"title":"Test"}]}
+  Each entry in "subtasks" has the same fields as a task (title, description, priority, due_date, tags) and may itself contain a "subtasks" array for deeper nesting. The server links every subtask to its real parent automatically after the parent is created.
+- Only use parent_id (a number) when attaching a NEW subtask to a task that ALREADY EXISTS (one from the current state below). Never set parent_id for a task you are creating in this same plan — nest it instead.
 - When breaking down a project, first create the project, then tasks under it
 - Be proactive: suggest task breakdowns, remind about deadlines, etc.
 - For status updates, use: todo, in_progress, done, blocked
@@ -138,7 +142,10 @@ function toId(v) {
 // Normalize + whitelist an action's fields. Returns a sanitized action, or
 // null if the action is unknown or missing what it needs. Applied to every
 // action before it is executed or shown for approval.
-function validateAction(action) {
+// Deepest level of nested subtasks we'll accept in a single create_task tree.
+const MAX_SUBTASK_DEPTH = 5;
+
+function validateAction(action, depth = 0) {
   if (!action || typeof action.action !== 'string') return null;
 
   switch (action.action) {
@@ -158,8 +165,17 @@ function validateAction(action) {
       if (action.status != null && VALID_PROJECT_STATUS.has(action.status)) out.status = action.status;
       return out;
     }
-    case 'create_task':
+    case 'create_task': {
       if (!action.title) return null;
+      // Recursively validate nested subtasks. Each becomes a create_task whose
+      // real parent_id is filled in at execution time (see executePlan). Any
+      // subtask entry that fails validation is dropped. Depth is capped to
+      // guard against a runaway/self-referential tree from the model.
+      const subtasks = Array.isArray(action.subtasks)
+        ? action.subtasks
+            .map(s => validateAction({ ...s, action: 'create_task' }, depth + 1))
+            .filter(Boolean)
+        : [];
       return {
         action: 'create_task',
         title: String(action.title),
@@ -170,7 +186,9 @@ function validateAction(action) {
         priority: VALID_PRIORITY.has(action.priority) ? action.priority : 'medium',
         due_date: action.due_date != null ? String(action.due_date) : null,
         tags: Array.isArray(action.tags) ? action.tags.map(String) : [],
+        subtasks: depth < MAX_SUBTASK_DEPTH ? subtasks : [],
       };
+    }
     case 'update_task': {
       const id = toId(action.id);
       if (!id) return null;
@@ -210,6 +228,56 @@ function validateAction(action) {
   }
 }
 
+// Insert one task and, depth-first, all of its nested subtasks — wiring each
+// child's parent_id to the real row id its parent just got. `action` is an
+// already-validated create_task. Returns { id, count } where count is the
+// total number of tasks inserted (this task + every descendant). Any DB error
+// propagates up so the surrounding transaction rolls the whole tree back.
+function insertTaskTree(action, parentId) {
+  const result = run(`
+    INSERT INTO tasks (project_id, parent_id, title, description, status, priority, due_date, tags)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    action.project_id || null,
+    parentId || null,
+    action.title,
+    action.description || null,
+    action.status || 'todo',
+    action.priority || 'medium',
+    action.due_date || null,
+    JSON.stringify(action.tags || [])
+  ]);
+
+  const id = result.lastInsertRowid;
+  let count = 1;
+  for (const child of action.subtasks || []) {
+    count += insertTaskTree(child, id).count;
+  }
+  return { id, count };
+}
+
+// Apply an approved plan as a single all-or-nothing unit: if any action throws,
+// the whole batch is rolled back so you never end up with a half-created tree
+// (e.g. a parent task with only some of its subtasks). Returns per-action
+// results on success; throws on failure so the route can report it.
+function executePlan(rawActions) {
+  const actions = (Array.isArray(rawActions) ? rawActions : [])
+    .map(a => validateAction(a))
+    .filter(Boolean);
+  if (actions.length === 0) {
+    throw new Error('No valid actions to execute');
+  }
+  return transaction(() => actions.map(a => {
+    const result = executeAction(a);
+    // executeAction swallows errors into {success:false}; in an all-or-nothing
+    // plan we must abort the transaction instead of committing a partial batch.
+    if (result && result.success === false && !result.pending_approval) {
+      throw new Error(`${result.type || 'action'} failed: ${result.error || 'unknown error'}`);
+    }
+    return result;
+  }));
+}
+
 function executeAction(rawAction) {
   // Re-validate at the point of execution. This covers both the chat path and
   // the /execute-plan approval path (whose payload round-trips through the
@@ -224,20 +292,8 @@ function executeAction(rawAction) {
       return { type: 'create_project', success: true, id: result.lastInsertRowid, title: action.title };
     }
     case 'create_task': {
-      const result = run(`
-        INSERT INTO tasks (project_id, parent_id, title, description, status, priority, due_date, tags)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        action.project_id || null,
-        action.parent_id || null,
-        action.title,
-        action.description || null,
-        action.status || 'todo',
-        action.priority || 'medium',
-        action.due_date || null,
-        JSON.stringify(action.tags || [])
-      ]);
-      return { type: 'create_task', success: true, id: result.lastInsertRowid, title: action.title };
+      const { id, count } = insertTaskTree(action, action.parent_id || null);
+      return { type: 'create_task', success: true, id, title: action.title, subtask_count: count };
     }
     case 'update_task': {
       const { id, action: _, ...fields } = action;
@@ -294,4 +350,4 @@ function getChatHistory() {
   return all('SELECT * FROM claude_chat_history ORDER BY created_at DESC LIMIT 50').reverse();
 }
 
-module.exports = { chat, getChatHistory, executeAction };
+module.exports = { chat, getChatHistory, executeAction, executePlan };

@@ -188,6 +188,11 @@ function importDbFile(filePath) {
   return check.summary;
 }
 
+// While a transaction() is running we suppress the per-statement saveDb() so
+// the whole batch is persisted once, atomically, on COMMIT (or discarded on
+// ROLLBACK). sql.js is in-memory, so a real BEGIN/ROLLBACK reverts the live db.
+let inTransaction = false;
+
 function run(sql, params = []) {
   const stmt = db.prepare(sql);
   if (params.length) stmt.bind(params);
@@ -198,8 +203,28 @@ function run(sql, params = []) {
   const rowIdResult = db.exec('SELECT last_insert_rowid() as id');
   const lastInsertRowid = rowIdResult.length > 0 ? rowIdResult[0].values[0][0] : 0;
 
-  saveDb();
+  if (!inTransaction) saveDb();
   return { lastInsertRowid, changes };
+}
+
+// Run fn() as an all-or-nothing unit. If fn throws, every write it made is
+// rolled back and the original data is left untouched. Returns fn()'s value.
+function transaction(fn) {
+  if (inTransaction) throw new Error('Nested transactions are not supported');
+  db.exec('BEGIN');
+  inTransaction = true;
+  try {
+    const result = fn();
+    db.exec('COMMIT');
+    inTransaction = false;
+    saveDb();
+    return result;
+  } catch (err) {
+    try { db.exec('ROLLBACK'); } catch (e) { /* nothing to roll back */ }
+    inTransaction = false;
+    saveDb();
+    throw err;
+  }
 }
 
 function all(sql, params = []) {
@@ -224,4 +249,4 @@ function get(sql, params = []) {
   return result;
 }
 
-module.exports = { initDb, getDb, run, all, get, backupDb, restoreDb, listBackups, saveDb, validateDbFile, importDbFile, exportDbTo };
+module.exports = { initDb, getDb, run, all, get, transaction, backupDb, restoreDb, listBackups, saveDb, validateDbFile, importDbFile, exportDbTo };

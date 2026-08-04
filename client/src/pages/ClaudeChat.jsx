@@ -180,6 +180,42 @@ const PRIORITY_COLORS = {
   low: 'text-slate-400',
 };
 
+// One row in the plan preview. Renders its nested subtasks indented beneath it
+// so the parent→child hierarchy is visible before you approve.
+function PlanItem({ action: a, depth = 0 }) {
+  const subtasks = Array.isArray(a.subtasks) ? a.subtasks : [];
+  return (
+    <div style={depth > 0 ? { marginLeft: depth * 14 } : undefined}>
+      <div className="flex items-start gap-2 bg-slate-700/50 rounded-lg px-2.5 py-2">
+        <span className="text-sm shrink-0">{depth > 0 ? '↳' : (ACTION_ICONS[a.action] || '•')}</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-medium text-white leading-tight">
+            {a.title || `${ACTION_LABELS[a.action] || a.action}${a.id ? ` #${a.id}` : ''}`}
+          </p>
+          {a.description && <p className="text-xs text-slate-400 mt-0.5 leading-tight truncate">{a.description}</p>}
+          <div className="flex gap-2 mt-0.5">
+            {(a.action === 'update_task' || a.action === 'update_project') && (
+              <span className="text-xs text-amber-400">{ACTION_LABELS[a.action]}</span>
+            )}
+            {a.status && <span className="text-xs text-slate-400">{a.status}</span>}
+            {a.priority && <span className={`text-xs ${PRIORITY_COLORS[a.priority] || 'text-slate-400'}`}>{a.priority}</span>}
+            {(depth > 0 || a.parent_id) && <span className="text-xs text-slate-500">subtask</span>}
+            {subtasks.length > 0 && <span className="text-xs text-blue-400">{subtasks.length} subtask{subtasks.length > 1 ? 's' : ''}</span>}
+            {a.action === 'create_project' && <span className="text-xs text-blue-400">project</span>}
+          </div>
+        </div>
+      </div>
+      {subtasks.length > 0 && (
+        <div className="mt-1.5 space-y-1.5">
+          {subtasks.map((s, i) => (
+            <PlanItem key={i} action={{ action: 'create_task', ...s }} depth={depth + 1} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProposedPlan({ actions, status, onApprove, onCancel }) {
   if (status === 'cancelled') {
     return (
@@ -218,24 +254,7 @@ function ProposedPlan({ actions, status, onApprove, onCancel }) {
       <p className="text-xs text-slate-400 font-semibold mb-2">📋 Plan — {actions.length} change{actions.length > 1 ? 's' : ''} to review:</p>
       <div className="space-y-1.5 mb-3">
         {actions.map((a, i) => (
-          <div key={i} className="flex items-start gap-2 bg-slate-700/50 rounded-lg px-2.5 py-2">
-            <span className="text-sm shrink-0">{ACTION_ICONS[a.action] || '•'}</span>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-white leading-tight">
-                {a.title || `${ACTION_LABELS[a.action] || a.action}${a.id ? ` #${a.id}` : ''}`}
-              </p>
-              {a.description && <p className="text-xs text-slate-400 mt-0.5 leading-tight truncate">{a.description}</p>}
-              <div className="flex gap-2 mt-0.5">
-                {(a.action === 'update_task' || a.action === 'update_project') && (
-                  <span className="text-xs text-amber-400">{ACTION_LABELS[a.action]}</span>
-                )}
-                {a.status && <span className="text-xs text-slate-400">{a.status}</span>}
-                {a.priority && <span className={`text-xs ${PRIORITY_COLORS[a.priority] || 'text-slate-400'}`}>{a.priority}</span>}
-                {a.parent_id && <span className="text-xs text-slate-500">subtask</span>}
-                {a.action === 'create_project' && <span className="text-xs text-blue-400">project</span>}
-              </div>
-            </div>
-          </div>
+          <PlanItem key={i} action={a} />
         ))}
       </div>
       <div className="flex gap-2">

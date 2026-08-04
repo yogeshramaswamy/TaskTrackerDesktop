@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { chat, getChatHistory, executeAction } = require('../services/claude-service');
+const { chat, getChatHistory, executeAction, executePlan } = require('../services/claude-service');
 const { run, get, backupDb, getDb, saveDb } = require('../db/database');
 
 router.post('/chat', async (req, res) => {
@@ -61,8 +61,14 @@ router.post('/execute-plan', (req, res) => {
   const { actions } = req.body;
   if (!actions || !actions.length) return res.status(400).json({ error: 'actions array is required' });
   backupDb();
-  const results = actions.map(a => executeAction(a));
-  res.json({ success: true, results });
+  try {
+    // All-or-nothing: parent tasks and their nested subtasks commit together,
+    // or the whole plan rolls back and nothing is created.
+    const results = executePlan(actions);
+    res.json({ success: true, results });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Plan failed and was rolled back: ' + err.message });
+  }
 });
 
 router.get('/history', (req, res) => {

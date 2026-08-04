@@ -25,7 +25,8 @@ export default function App() {
   return (
     <div className="flex h-screen">
       <nav className="w-56 bg-slate-800 border-r border-slate-700 flex flex-col">
-        <div className="p-4 border-b border-slate-700">
+        <div className="p-4 border-b border-slate-700 flex items-center gap-2">
+          <img src="/logo.png" alt="TaskTracker Pro" className="w-7 h-7 rounded" />
           <h1 className="text-lg font-bold text-blue-400">TaskTracker Pro</h1>
         </div>
         <div className="flex-1 p-2 space-y-1">

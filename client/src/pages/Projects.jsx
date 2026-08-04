@@ -223,19 +223,21 @@ export default function Projects() {
               className={`group bg-slate-800 rounded-lg p-4 cursor-pointer border ${selected?.id === p.id ? 'border-blue-500' : 'border-transparent hover:border-slate-600'}`}
             >
               <div className="flex items-start justify-between gap-2">
-                <h3 className="font-medium flex-1">{p.title}</h3>
-                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setEditProject(p); }}
-                    className="text-xs text-blue-400 hover:text-blue-300 px-1.5 py-0.5 rounded bg-blue-900/20"
-                    title="Edit project"
-                  >✏️</button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setDeleteError(''); setDeleteTarget(p); }}
-                    className="text-xs text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded bg-red-900/20"
-                    title="Delete project"
-                  >🚮</button>
-                </div>
+                <h3 className={`font-medium flex-1 ${p.synthetic ? 'text-slate-400 italic' : ''}`}>{p.title}</h3>
+                {!p.synthetic && (
+                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setEditProject(p); }}
+                      className="text-xs text-blue-400 hover:text-blue-300 px-1.5 py-0.5 rounded bg-blue-900/20"
+                      title="Edit project"
+                    >✏️</button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDeleteError(''); setDeleteTarget(p); }}
+                      className="text-xs text-red-400 hover:text-red-300 px-1.5 py-0.5 rounded bg-red-900/20"
+                      title="Delete project"
+                    >🚮</button>
+                  </div>
+                )}
               </div>
               {p.description && <p className="text-xs text-slate-400 mt-1 line-clamp-2">{p.description}</p>}
               <div className="mt-3">
