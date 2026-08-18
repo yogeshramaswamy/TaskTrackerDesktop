@@ -33,19 +33,34 @@ router.get('/dashboard', (req, res) => {
 });
 
 router.get('/weekly', (req, res) => {
-  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { from, to } = req.query;
 
-  const completed = all("SELECT * FROM tasks WHERE status = 'done' AND updated_at >= ?", [weekAgo]);
+  // Default window: the last 7 days up to now.
+  const start = from ? new Date(from) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const end = to ? new Date(to) : new Date();
+  if (isNaN(start) || isNaN(end)) {
+    return res.status(400).json({ error: 'invalid from/to date' });
+  }
+  const startIso = start.toISOString();
+  const endIso = end.toISOString();
+
+  const completed = all(
+    "SELECT * FROM tasks WHERE status = 'done' AND updated_at >= ? AND updated_at < ?",
+    [startIso, endIso]
+  );
   const activities = all(`
     SELECT a.*, t.title as task_title
     FROM activity_log a
     LEFT JOIN tasks t ON a.task_id = t.id
-    WHERE a.logged_at >= ?
+    WHERE a.logged_at >= ? AND a.logged_at < ?
     ORDER BY a.logged_at DESC
-  `, [weekAgo]);
-  const totalHours = (get('SELECT COALESCE(SUM(hours_spent), 0) as total FROM activity_log WHERE logged_at >= ?', [weekAgo]) || { total: 0 }).total;
+  `, [startIso, endIso]);
+  const totalHours = (get(
+    'SELECT COALESCE(SUM(hours_spent), 0) as total FROM activity_log WHERE logged_at >= ? AND logged_at < ?',
+    [startIso, endIso]
+  ) || { total: 0 }).total;
 
-  res.json({ completed, activities, totalHours });
+  res.json({ completed, activities, totalHours, from: startIso, to: endIso });
 });
 
 router.get('/quarterly', async (req, res) => {

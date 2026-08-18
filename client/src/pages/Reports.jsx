@@ -16,8 +16,29 @@ const REPORT_TYPES = [
   { key: 'quarterly', label: 'Quarterly Review', icon: '◪' },
 ];
 
+// Returns the {start, end} of the week (Mon 00:00 → next Mon 00:00) that
+// contains `ref`, shifted by `offset` weeks (0 = current week).
+function weekRange(offset = 0) {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const day = (now.getDay() + 6) % 7; // 0 = Monday
+  const start = new Date(now);
+  start.setDate(now.getDate() - day + offset * 7);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 7);
+  return { start, end };
+}
+
+function formatWeekLabel(start, end) {
+  const opts = { month: 'short', day: 'numeric' };
+  const last = new Date(end);
+  last.setDate(last.getDate() - 1); // inclusive last day
+  return `${start.toLocaleDateString(undefined, opts)} – ${last.toLocaleDateString(undefined, opts)}`;
+}
+
 export default function Reports() {
   const [selected, setSelected] = useState('weekly');
+  const [weekOffset, setWeekOffset] = useState(0);
   const [weekly, setWeekly] = useState(null);
   const [projects, setProjects] = useState([]);
   const [selectedProject, setSelectedProject] = useState(null);
@@ -30,9 +51,16 @@ export default function Reports() {
   const [dateRange, setDateRange] = useState({ from: '', to: '' });
 
   useEffect(() => {
-    api.reports.weekly().then(setWeekly).catch(console.error);
     api.projects.list().then(setProjects).catch(console.error);
   }, []);
+
+  const { start: weekStart, end: weekEnd } = weekRange(weekOffset);
+
+  useEffect(() => {
+    const { start, end } = weekRange(weekOffset);
+    setWeekly(null);
+    api.reports.weekly(start.toISOString(), end.toISOString()).then(setWeekly).catch(console.error);
+  }, [weekOffset]);
 
   const selectProject = async (p) => {
     setSelectedProject(p);
@@ -110,7 +138,16 @@ export default function Reports() {
 
       {/* Right content */}
       <div className="flex-1 overflow-auto">
-        {selected === 'weekly' && <WeeklyReport weekly={weekly} />}
+        {selected === 'weekly' && (
+          <WeeklyReport
+            weekly={weekly}
+            weekLabel={formatWeekLabel(weekStart, weekEnd)}
+            weekOffset={weekOffset}
+            onPrev={() => setWeekOffset(o => o - 1)}
+            onNext={() => setWeekOffset(o => o + 1)}
+            onCurrent={() => setWeekOffset(0)}
+          />
+        )}
         {selected === 'projects' && (
           <ProjectReport
             project={selectedProject}
@@ -135,13 +172,44 @@ export default function Reports() {
   );
 }
 
-function WeeklyReport({ weekly }) {
-  if (!weekly) return <p className="text-slate-400">Loading...</p>;
-
+function WeeklyReport({ weekly, weekLabel, weekOffset, onPrev, onNext, onCurrent }) {
   return (
     <div className="space-y-6">
-      <h3 className="text-xl font-bold">Weekly Summary</h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-xl font-bold">Weekly Summary</h3>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onPrev}
+            aria-label="Previous week"
+            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+          >
+            ‹
+          </button>
+          <div className="text-center min-w-[9rem]">
+            <p className="text-sm font-medium">{weekLabel}</p>
+            <button
+              onClick={onCurrent}
+              className={`text-xs ${weekOffset === 0 ? 'text-slate-500' : 'text-blue-400 hover:underline'}`}
+              disabled={weekOffset === 0}
+            >
+              {weekOffset === 0 ? 'This week' : 'Jump to this week'}
+            </button>
+          </div>
+          <button
+            onClick={onNext}
+            aria-label="Next week"
+            disabled={weekOffset >= 0}
+            className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40 disabled:hover:bg-slate-800"
+          >
+            ›
+          </button>
+        </div>
+      </div>
 
+      {!weekly ? (
+        <p className="text-slate-400">Loading...</p>
+      ) : (
+      <>
       <div className="grid grid-cols-3 gap-4">
         <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
           <p className="text-2xl font-bold text-green-400">{weekly.completed.length}</p>
@@ -190,6 +258,8 @@ function WeeklyReport({ weekly }) {
           ))}
         </div>
       </section>
+      </>
+      )}
     </div>
   );
 }

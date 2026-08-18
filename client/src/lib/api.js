@@ -61,7 +61,7 @@ export const api = {
   },
   reports: {
     dashboard: () => request('/reports/dashboard'),
-    weekly: () => request('/reports/weekly'),
+    weekly: (from, to) => request(from && to ? `/reports/weekly?from=${from}&to=${to}` : '/reports/weekly'),
     quarterly: (from, to) => request(`/reports/quarterly?from=${from}&to=${to}`),
   },
   journal: {
